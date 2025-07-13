@@ -9,3 +9,4 @@ fpdf
 statsmodels
 textblob
 bcrypt
+google-generativeai
