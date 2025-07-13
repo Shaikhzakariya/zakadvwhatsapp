@@ -10,3 +10,4 @@ statsmodels
 textblob
 bcrypt
 google-generativeai
+pywhatkit
