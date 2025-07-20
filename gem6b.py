@@ -899,7 +899,7 @@ def show_login_page():
                 st.session_state['logged_in'] = True
                 st.session_state['username'] = username
                 st.success("Logged in successfully!")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("Invalid username or password.")
         elif register_page_button:
