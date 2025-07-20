@@ -16,22 +16,6 @@ from textblob import TextBlob
 from datetime import datetime, timedelta
 import numpy as np
 
-# Conditional import for pywhatkit (for local use primarily)
-try:
-    import pywhatkit as kit
-    PYWHATKIT_AVAILABLE = True
-except ImportError:
-    st.warning("`pywhatkit` not found. WhatsApp Web automation features will be disabled. Install with `pip install pywhatkit`.")
-    PYWHATKIT_AVAILABLE = False
-    # Create dummy functions to prevent NameError
-    class DummyKit:
-        def sendwhatmsg_instantly(self, phone_no, message, wait_time):
-            st.error("pywhatkit is not installed. Cannot send message directly.")
-        def sendwhatmsg_to_group_instantly(self, group_id, message, wait_time):
-            st.error("pywhatkit is not installed. Cannot send message directly.")
-    kit = DummyKit()
-
-
 nltk.download('stopwords')
 import bcrypt
 import json
@@ -729,8 +713,7 @@ def guess_personality_traits(chat_df):
 
     prompt = f"""
     You are an AI personality profiler. Analyze the messaging styles of two individuals in a WhatsApp chat.
-    Based on the provided statistics and sample messages, infer potential personality traits for each person, similar to a light MBTI-like guess (e.g., "warm and expressive", "reserved and analytical", "spontaneous and energetic").
-    You can also suggest a relevant emoji or symbol for their style.
+    Based on the provided statistics and sample messages, infer potential personality traits for each person, similar to a light MBTI-like guess (e.g., "warm and expressive", "reserved and analytical", "spontaneous and energetic"). You can also suggest a relevant emoji or symbol for their style.
 
     Here are the statistics for {user1_name}:
     - Total Messages: {user1_stats['num_messages']}
@@ -748,8 +731,7 @@ def guess_personality_traits(chat_df):
     - Common Emojis: {user2_stats['common_emojis']}
     - Sample Messages: "{user2_stats['sample_messages']}"
 
-    Based on this, provide a personality description for each user.
-    Format your output as:
+    Based on this, provide a personality description for each user. Format your output as:
     **{user1_name}:** [Personality Description with emoji]
     **{user2_name}:** [Personality Description with emoji]
     """
@@ -767,9 +749,8 @@ def detect_conflict_and_recovery(df, time_window_minutes=60, sentiment_threshold
 
     df['polarity'] = df['message'].apply(lambda x: TextBlob(x).sentiment.polarity)
     df_sorted = df.sort_values(by='datetime').reset_index(drop=True)
-
     conflict_patterns = []
-    
+
     for i in range(len(df_sorted)):
         current_msg = df_sorted.iloc[i]
         
@@ -780,19 +761,17 @@ def detect_conflict_and_recovery(df, time_window_minutes=60, sentiment_threshold
             
             # Check for subsequent messages within the window
             subsequent_msgs = df_sorted[
-                (df_sorted['datetime'] > current_msg['datetime']) & 
+                (df_sorted['datetime'] > current_msg['datetime']) &
                 (df_sorted['datetime'] <= end_window_time) &
                 (df_sorted.index > i) # Ensure we look forward from the current message
             ]
-            
+
             if not subsequent_msgs.empty:
                 # Check for significant positive shift within the window
                 max_pos_polarity_in_window = subsequent_msgs['polarity'].max()
-                
                 if max_pos_polarity_in_window > recovery_threshold and (max_pos_polarity_in_window - current_msg['polarity']) > recovery_threshold:
                     # Found a potential recovery
                     recovery_msg = subsequent_msgs.loc[subsequent_msgs['polarity'].idxmax()]
-                    
                     conflict_patterns.append({
                         "start_time": current_msg['datetime'],
                         "end_time": recovery_msg['datetime'],
@@ -819,7 +798,7 @@ def create_compatibility_radar_chart(df):
     users = df['user'].unique()
     if len(users) != 2: # Redundant check but good for safety
         return None, "Radar chart is best for comparing two users. This chat has more/less than two participants."
-    
+
     user1, user2 = users[0], users[1]
 
     # Calculate metrics for each user
@@ -849,12 +828,12 @@ def create_compatibility_radar_chart(df):
 
     radar_values_user1 = []
     radar_values_user2 = []
-    
+
     # Axes for Radar Chart
     labels = [
-        'Positivity', 
-        'Message Frequency', 
-        'Message Length', 
+        'Positivity',
+        'Message Frequency',
+        'Message Length',
         'Daily Consistency'
     ]
 
@@ -869,7 +848,7 @@ def create_compatibility_radar_chart(df):
     # Message Length (normalized by overall max msg length)
     radar_values_user1.append(metrics[user1]['avg_msg_length'] / max_avg_msg_length)
     radar_values_user2.append(metrics[user2]['avg_msg_length'] / max_avg_msg_length)
-    
+
     # Daily Consistency (normalized by max avg daily messages)
     radar_values_user1.append(metrics[user1]['avg_daily_messages'] / max_avg_daily_messages)
     radar_values_user2.append(metrics[user2]['avg_daily_messages'] / max_avg_daily_messages)
@@ -883,10 +862,10 @@ def create_compatibility_radar_chart(df):
     radar_values_user2 += radar_values_user2[:1]
 
     fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(polar=True))
-    
+
     ax.plot(angles, radar_values_user1, linewidth=2, linestyle='solid', label=user1, color='blue', alpha=0.7)
     ax.fill(angles, radar_values_user1, color='blue', alpha=0.25)
-    
+
     ax.plot(angles, radar_values_user2, linewidth=2, linestyle='solid', label=user2, color='red', alpha=0.7)
     ax.fill(angles, radar_values_user2, color='red', alpha=0.25)
 
@@ -896,1560 +875,398 @@ def create_compatibility_radar_chart(df):
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels(labels)
     ax.set_ylim(0, 1) # Normalized scale
+
     ax.set_title('Relationship Compatibility Radar', size=16, color='grey', y=1.1)
-    ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
+    ax.legend(loc='upper right')
 
     return fig, None
 
-# NEW RELATIONSHIP FEATURES FUNCTIONS
-
-# 1. Emotional Compatibility Meter
-def emotional_compatibility_meter(df):
-    if df.empty or df['user'].nunique() != 2:
-        return "Please upload a two-person chat for emotional compatibility analysis."
-
-    df['polarity'] = df['message'].apply(lambda msg: TextBlob(msg).sentiment.polarity)
-    
-    users = df['user'].unique()
-    user1, user2 = users[0], users[1]
-
-    user1_sentiment = df[df['user'] == user1]['polarity']
-    user2_sentiment = df[df['user'] == user2]['polarity']
-
-    avg_sentiment1 = user1_sentiment.mean()
-    avg_sentiment2 = user2_sentiment.mean()
-
-    std_sentiment1 = user1_sentiment.std()
-    std_sentiment2 = user2_sentiment.std()
-
-    # Calculate emotional sync score (higher is better)
-    # 1. Similarity in average sentiment (closer to 0 difference is better)
-    avg_sentiment_diff = abs(avg_sentiment1 - avg_sentiment2)
-    # Normalize difference: max diff is 2 (1 to -1), so (2 - diff)/2
-    avg_sentiment_sync = (2 - avg_sentiment_diff) / 2
-
-    # 2. Similarity in emotional range (closer to 0 difference is better)
-    # Handle cases where std is NaN (e.g., very few messages)
-    std_sentiment_diff = abs(std_sentiment1 - std_sentiment2) if not (pd.isna(std_sentiment1) or pd.isna(std_sentiment2)) else 0
-    # Normalize std dev diff: max std dev is 1, so (1 - diff)/1
-    std_sentiment_sync = (1 - std_sentiment_diff) if std_sentiment_diff <= 1 else 0 # Cap at 0 if diff > 1
-
-    # Combine scores (weighted, can be adjusted)
-    emotional_sync_score = (avg_sentiment_sync * 0.6 + std_sentiment_sync * 0.4) * 100 # Scale to 100
-
-    interpretation = ""
-    if emotional_sync_score >= 80:
-        interpretation = "You both ride the same emotional wave 🌊! Highly in sync."
-    elif emotional_sync_score >= 60:
-        interpretation = "Good emotional compatibility, generally on the same page. 👍"
-    elif emotional_sync_score >= 40:
-        interpretation = "Moderate emotional compatibility. Some differences in emotional expression."
-    else:
-        interpretation = "There might be some differences in how you express or experience emotions. Consider open communication. 💬"
-
-    return emotional_sync_score, interpretation, avg_sentiment1, avg_sentiment2, std_sentiment1, std_sentiment2
-
-# 2. Message Type Classifier (Heuristic)
-def classify_message_types(df):
-    if df.empty:
-        return "No messages to classify.", None
-
-    message_types = {
-        'Romantic 💘': ['love', 'miss you', 'babe', 'honey', 'darling', 'sweetheart', 'xoxo', 'kiss', 'hug', 'cutie', 'my dear', '❤️', '🥰', '😘', '😍', '💕', '💖', '💞'],
-        'Conversational 🗣️': ['hey', 'hi', 'how are you', 'what\'s up', 'lol', 'haha', 'yeah', 'okay', 'alright', 'just checking in', 'chat soon'],
-        'Curious 🤔': ['?', 'what', 'when', 'where', 'why', 'how', 'tell me more', 'curious', 'wondering'],
-        'Intellectual 🧠': ['think about', 'idea', 'concept', 'theory', 'article', 'research', 'analysis', 'discuss', 'perspective'],
-        'Needy 🥺': ['need you', 'lonely', 'miss you so much', 'please', 'can you', 'are you there', 'waiting', '🥺', '😔', '😭']
-    }
-
-    message_counts = {k: 0 for k in message_types.keys()}
-    
-    for message in df['message'].dropna().str.lower():
-        assigned = False
-        for msg_type, keywords in message_types.items():
-            if any(keyword in message for keyword in keywords):
-                message_counts[msg_type] += 1
-                assigned = True
-                break # Assign to the first matching category
-        # If no specific category matches, it's just general conversation
-        # We could add a 'General' category, but for now, it's implicitly not counted in the above.
-
-    total_classified = sum(message_counts.values())
-    if total_classified == 0:
-        return "No messages matched defined categories.", None
-        
-    # Filter out types with 0 messages for the pie chart
-    filtered_counts = {k: v for k, v in message_counts.items() if v > 0}
-    
-    labels = filtered_counts.keys()
-    sizes = filtered_counts.values()
-
-    fig, ax = plt.subplots()
-    ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, wedgeprops={'edgecolor': 'black'})
-    ax.axis('equal')
-    ax.set_title('Distribution of Message Types')
-    return "Message type distribution:", fig
-
-# 3. Relationship Diary Generator (Auto-TL;DR)
-def generate_relationship_diary(df):
-    if df.empty or df['user'].nunique() != 2:
-        return "Please upload a two-person chat for the relationship diary."
-
-    first_msg_date, total_days_chatted, longest_gap, longest_streak = calculate_relationship_timeline_insights(df)
-    
-    df['polarity'] = df['message'].apply(lambda msg: TextBlob(msg).sentiment.polarity)
-    avg_sentiment = df['polarity'].mean()
-
-    user_message_counts = df['user'].value_counts()
-    user1, user2 = user_message_counts.index[0], user_message_counts.index[1]
-    count1, count2 = user_message_counts.iloc[0], user_message_counts.iloc[1]
-
-    # Get top emojis
-    emojis = emoji_counter(df)
-    top_emojis_str = ", ".join([f"{e[0]} ({e[1]})" for e in emojis[:3]]) if emojis else "none"
-
-    # Get response times
-    avg_res_readable, _, fastest_replier = calculate_response_times_per_user(df)
-    response_time_info = ""
-    if fastest_replier:
-        response_time_info = f"{fastest_replier} tends to reply faster."
-    else:
-        response_time_info = "Response time patterns are balanced or unclear."
-
-    # Count "I love you" mentions (simple keyword search)
-    love_you_count = df['message'].str.lower().str.count(r'i love you').sum()
-    
-    chat_summary_text = ' '.join(df['message'].dropna().tolist())
-    if len(chat_summary_text) > 5000: # Truncate for AI prompt
-        chat_summary_text = chat_summary_text[:5000] + "..."
-
-    prompt = f"""
-    Write a concise and warm relationship diary entry summarizing the communication between two partners based on the following data:
-    - Chat start date: {first_msg_date}
-    - Total days chatted: {total_days_chatted}
-    - Total messages: {len(df)}
-    - Average chat sentiment (polarity -1 to 1): {avg_sentiment:.2f}
-    - Message count: {user1} sent {count1} messages, {user2} sent {count2} messages.
-    - Top 3 emojis used: {top_emojis_str}
-    - "I love you" mentions: {love_you_count} times
-    - Response time insight: {response_time_info}
-    - Sample chat content: {chat_summary_text}
-
-    Focus on the overall mood, key communication patterns, and highlights. Make it sound like a personal diary entry.
-    Example: "March was filled with warm moments. You exchanged 437 messages, said 'I love you' 13 times, and used 🥺 most often. Aisha sent more messages, but you replied faster."
-    """
-    try:
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        return f"Error generating relationship diary: {e}"
-
-# 4. Attachment Style Prediction (Experimental - Rule-based)
-def predict_attachment_style(df):
-    if df.empty or df['user'].nunique() != 2:
-        return "Please upload a two-person chat for attachment style prediction."
-
-    df['polarity'] = df['message'].apply(lambda msg: TextBlob(msg).sentiment.polarity)
-    
-    users = df['user'].unique()
-    user_styles = {}
-
-    avg_res_readable, avg_res_sec_per_user, fastest_replier = calculate_response_times_per_user(df)
-    
-    for user in users:
-        user_df = df[df['user'] == user]
-        num_messages = len(user_df)
-        avg_sentiment = user_df['polarity'].mean()
-        
-        # Calculate response time for this user (how fast they reply to others)
-        response_time_seconds = avg_res_sec_per_user.get(user, 0)
-
-        # Heuristic rules for attachment styles
-        style = "Unknown"
-        explanation = []
-
-        # Secure: Balanced, positive, moderate response
-        if (num_messages > len(df) * 0.4 and num_messages < len(df) * 0.6) and \
-           avg_sentiment > 0.1 and \
-           (response_time_seconds > 60 and response_time_seconds < 3600): # 1 min to 1 hour
-            style = "Secure 💚"
-            explanation.append("Balanced communication, generally positive sentiment, and healthy response times.")
-        
-        # Anxious: High frequency, quick response, sometimes lower sentiment if not reciprocated
-        elif num_messages > len(df) * 0.6 and \
-             avg_sentiment > -0.1 and \
-             response_time_seconds > 0 and response_time_seconds < 300: # Less than 5 minutes, ensure response_time_seconds is not 0
-            style = "Anxious 🧡"
-            explanation.append("High message frequency and quick responses, potentially indicating a need for reassurance.")
-            
-        # Avoidant: Lower frequency, longer response, neutral/negative sentiment
-        elif num_messages < len(df) * 0.3 and \
-             avg_sentiment < 0.1 and \
-             response_time_seconds > 3600 * 2: # More than 2 hours
-            style = "Avoidant 💙"
-            explanation.append("Lower message frequency and longer response times, possibly indicating a preference for independence.")
-        
-        # Fallback for other patterns
-        if style == "Unknown":
-            if num_messages > len(df) * 0.7:
-                style = "Highly Engaged"
-                explanation.append("Very high message frequency, indicating strong engagement.")
-            elif num_messages < len(df) * 0.3:
-                style = "Less Engaged"
-                explanation.append("Lower message frequency, suggesting less active participation.")
-            
-            if avg_sentiment < -0.2:
-                explanation.append("Tends to have a more negative sentiment.")
-            elif avg_sentiment > 0.2:
-                explanation.append("Tends to have a more positive sentiment.")
-
-        user_styles[user] = {"style": style, "explanation": " ".join(explanation) if explanation else "General communication patterns."}
-
-    return user_styles
-
-# 5. Mood Shifts Over Time (already handled by sentiment_trend function, just need to display it)
-
-# 6. Love Language Classifier (Heuristic)
-def classify_love_language(df):
-    if df.empty:
-        return "No messages to classify love languages.", None
-
-    love_languages = {
-        'Words of Affirmation 💬': ['i love you', 'i appreciate you', 'thank you', 'you are the best', 'amazing', 'great job', 'so proud', 'miss you', 'thinking of you', 'beautiful', 'handsome', 'sweet'],
-        'Quality Time ⏰': ['let\'s call', 'call me', 'meet up', 'hang out', 'see you soon', 'spend time', 'date night', 'together', 'facetime', 'video call'],
-        'Acts of Service 🛠️': ['i can help', 'let me know if you need', 'did you eat', 'take care', 'i\'ll do it', 'don\'t worry', 'i got this', 'done for you', 'how can i help'],
-        'Receiving Gifts 🎁': ['gift', 'present', 'bought you', 'found this for you', 'surprise', 'got you', 'treat'],
-        'Physical Touch (implied) 🤗': ['hug', 'cuddle', 'kiss', 'touch', 'snuggle', 'come here', 'miss your touch', '🤗', '😘', '🥰'] # More implied for chat
-    }
-
-    language_counts = {k: 0 for k in love_languages.keys()}
-
-    for message in df['message'].dropna().str.lower():
-        for lang, keywords in love_languages.items():
-            if any(keyword in message for keyword in keywords):
-                language_counts[lang] += 1
-    
-    total_classified = sum(language_counts.values())
-    if total_classified == 0:
-        return "No messages matched defined love language categories.", None
-
-    filtered_counts = {k: v for k, v in language_counts.items() if v > 0}
-
-    labels = filtered_counts.keys()
-    sizes = filtered_counts.values()
-
-    fig, ax = plt.subplots()
-    ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, wedgeprops={'edgecolor': 'black'})
-    ax.axis('equal')
-    ax.set_title('Dominant Love Languages (Based on Chat Content)')
-    return "Love language distribution:", fig
-
-# 7. Personality Traits (Light MBTI Guess) - using existing guess_personality_traits
-
-
-# ===================== BUSINESS FEATURES FUNCTIONS =====================
-
-# 1. Response Time Insights (adapted from existing, focusing on business context)
-def business_response_time_insights(df):
-    if df.empty:
-        return "No chat data available for response time analysis."
-
-    df_sorted = df.sort_values(by='datetime').reset_index(drop=True)
-    response_times_seconds = []
-    
-    # To identify fastest/slowest replies, we need to track individual response times
-    individual_response_times = [] # List of (user, time_diff_seconds)
-    
-    # Map user to their last message time
-    last_message_time = {user: None for user in df['user'].unique()}
-
-    for i in range(len(df_sorted)):
-        current_msg = df_sorted.iloc[i]
-        current_user = current_msg['user']
-        current_time = current_msg['datetime']
-
-        # Check if the previous message was from a different user
-        if i > 0 and df_sorted.iloc[i-1]['user'] != current_user:
-            prev_msg_time = df_sorted.iloc[i-1]['datetime']
-            time_diff = (current_time - prev_msg_time).total_seconds()
-            response_times_seconds.append(time_diff)
-            individual_response_times.append({'user': current_user, 'time_diff': time_diff, 'message': current_msg['message']})
-        
-        # Update last message time for the current user
-        last_message_time[current_user] = current_time
-
-    if not response_times_seconds:
-        return "Not enough back-and-forth messages between different users to calculate response times."
-
-    avg_response_sec = sum(response_times_seconds) / len(response_times_seconds)
-    
-    hours, remainder = divmod(avg_response_sec, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    avg_response_readable = f"{int(hours)}h {int(minutes)}m {int(seconds)}s"
-
-    # Fastest and slowest reply cases
-    fastest_reply = None
-    slowest_reply = None
-    if individual_response_times:
-        fastest_reply = min(individual_response_times, key=lambda x: x['time_diff'])
-        slowest_reply = max(individual_response_times, key=lambda x: x['time_diff'])
-
-    result_str = f"**Overall Average Response Time:** {avg_response_readable}\n\n"
-    
-    if fastest_reply:
-        fastest_h, fastest_m, fastest_s = int(fastest_reply['time_diff'] // 3600), int((fastest_reply['time_diff'] % 3600) // 60), int(fastest_reply['time_diff'] % 60)
-        result_str += f"**Fastest Reply:** by {fastest_reply['user']} in {fastest_h}h {fastest_m}m {fastest_s}s. Message: \"{fastest_reply['message'][:50]}...\"\n"
-    if slowest_reply:
-        slowest_h, slowest_m, slowest_s = int(slowest_reply['time_diff'] // 3600), int((slowest_reply['time_diff'] % 3600) // 60), int(slowest_reply['time_diff'] % 60)
-        result_str += f"**Slowest Reply:** by {slowest_reply['user']} in {slowest_h}h {slowest_m}m {slowest_s}s. Message: \"{slowest_reply['message'][:50]}...\"\n"
-
-    # Plot distribution
-    fig, ax = plt.subplots()
-    # Convert to minutes for plotting if values are large
-    response_times_minutes = [t / 60 for t in response_times_seconds]
-    sns.histplot(response_times_minutes, bins=20, kde=True, ax=ax)
-    ax.set_title('Distribution of Response Times (Minutes)')
-    ax.set_xlabel('Response Time (Minutes)')
-    ax.set_ylabel('Frequency')
-    
-    return result_str, fig
-
-# 2. Order Tracker (Simplified)
-def order_tracker(df):
-    if df.empty:
-        return "No chat data to track orders."
-
-    order_keywords = {
-        'Order Placed 📝': ['order placed', 'placed an order', 'booked', 'confirm order', 'new order'],
-        'Order Received 📦': ['order received', 'we received your order', 'got your order', 'order confirmed'],
-        'Order Shipped 🚚': ['shipped', 'dispatched', 'on its way', 'tracking number'],
-        'Order Delivered ✅': ['delivered', 'received the order', 'got it', 'delivery done'],
-        'Inquiry ❓': ['inquiry', 'question', 'ask about', 'details', 'how much', 'price', 'do you have']
-    }
-
-    order_events = []
-    for index, row in df.iterrows():
-        message = row['message'].lower()
-        for event_type, keywords in order_keywords.items():
-            if any(keyword in message for keyword in keywords):
-                order_events.append({
-                    'datetime': row['datetime'],
-                    'user': row['user'],
-                    'message': row['message'],
-                    'event_type': event_type
-                })
-                break # Classify message into first matching category
-
-    if not order_events:
-        return "No specific order-related phrases found in the chat."
-
-    events_df = pd.DataFrame(order_events).sort_values(by='datetime')
-    
-    st.write("### Order-Related Events Timeline:")
-    for index, row in events_df.iterrows():
-        st.markdown(f"**{row['datetime'].strftime('%Y-%m-%d %H:%M')} - {row['user']}**: {row['event_type']} - \"{row['message'][:100]}...\"")
-    
-    # Basic summary chart
-    event_counts = events_df['event_type'].value_counts()
-    fig, ax = plt.subplots()
-    sns.barplot(x=event_counts.index, y=event_counts.values, palette='pastel', ax=ax)
-    ax.set_title('Distribution of Order-Related Events')
-    ax.set_ylabel('Count')
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
-    plt.tight_layout()
-    return "Order tracking insights:", fig
-
-
-# 3. Message Classification (Business specific)
-def business_message_classification(df):
-    if df.empty:
-        return "No messages to classify.", None
-
-    message_types_business = {
-        'Inquiry 📥': ['inquiry', 'question', 'ask about', 'details', 'how much', 'price', 'do you have', 'can you tell me'],
-        'Order 📦': ['order placed', 'i want to buy', 'confirm order', 'book', 'purchase', 'get me', 'need to order'],
-        'Complaint 🛠️': ['complaint', 'problem', 'issue', 'not working', 'bad service', 'unhappy', 'late', 'wrong item', 'damaged'],
-        'Confirmation ✅': ['ok', 'okay', 'confirmed', 'yes', 'alright', 'received', 'thank you', 'understood'],
-        'Payment 💰': ['paid', 'payment', 'transferred', 'money', 'invoice', 'bill', 'receipt', 'amount'],
-        'Support/Help ❓': ['help', 'support', 'assist', 'trouble', 'fix', 'guide me'],
-        'Feedback 👍': ['feedback', 'review', 'suggestion', 'good service', 'happy with', 'excellent']
-    }
-
-    classified_messages = {k: 0 for k in message_types_business.keys()}
-    
-    for message in df['message'].dropna().str.lower():
-        assigned = False
-        for msg_type, keywords in message_types_business.items():
-            if any(keyword in message for keyword in keywords):
-                classified_messages[msg_type] += 1
-                assigned = True
-                break
-        # If a message doesn't fit any specific category, it's general chat
-        # For business context, we might want to count 'General' too, but for simplicity, only specific types are counted.
-
-    total_classified = sum(classified_messages.values())
-    if total_classified == 0:
-        return "No messages matched defined business categories.", None
-        
-    filtered_counts = {k: v for k, v in classified_messages.items() if v > 0}
-    
-    labels = filtered_counts.keys()
-    sizes = filtered_counts.values()
-
-    fig, ax = plt.subplots()
-    ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, wedgeprops={'edgecolor': 'black'})
-    ax.axis('equal')
-    ax.set_title('Distribution of Business Message Types')
-    return "Business message type distribution:", fig
-
-
-# 4. Deal Conversion Funnel (Conceptual/Keyword-based)
-def deal_conversion_funnel(df):
-    if df.empty:
-        return "No chat data to analyze deal conversion."
-
-    # Define keywords for each stage
-    lead_keywords = ['interested', 'looking for', 'tell me about', 'want to know', 'pricing']
-    inquiry_keywords = ['question', 'details', 'how much', 'can you send', 'more info']
-    deal_keywords = ['offer', 'discount', 'deal', 'proposal', 'quote', 'negotiate']
-    payment_keywords = ['paid', 'payment', 'invoice', 'bank transfer', 'upi', 'transaction']
-    closed_keywords = ['confirmed', 'done', 'completed', 'thank you for your order', 'great service']
-
-    # Track unique conversations that reach each stage
-    # For simplicity, we'll assume each message is a separate "conversation" for funnel purposes,
-    # or you'd need to group messages into conversations first.
-    # Here, we'll just count messages matching keywords.
-    
-    # A more robust funnel would track a single conversation's progression.
-    # For this simplified version, we'll count messages that contain keywords for each stage.
-    
-    num_leads = df['message'].str.lower().apply(lambda x: any(kw in x for kw in lead_keywords)).sum()
-    num_inquiries = df['message'].str.lower().apply(lambda x: any(kw in x for kw in inquiry_keywords)).sum()
-    num_deals = df['message'].str.lower().apply(lambda x: any(kw in x for kw in deal_keywords)).sum()
-    num_payments = df['message'].str.lower().apply(lambda x: any(kw in x for kw in payment_keywords)).sum()
-    num_closed = df['message'].str.lower().apply(lambda x: any(kw in x for kw in closed_keywords)).sum()
-
-    # Create a funnel-like representation
-    funnel_stages = {
-        "Leads": num_leads,
-        "Inquiries": num_inquiries,
-        "Deals": num_deals,
-        "Payments": num_payments,
-        "Closed": num_closed
-    }
-    
-    st.subheader("Conceptual Deal Conversion Funnel (based on keywords)")
-    st.write("This funnel tracks the count of messages containing keywords related to each stage.")
-    
-    # Display as a bar chart
-    fig, ax = plt.subplots(figsize=(10, 6))
-    sns.barplot(x=list(funnel_stages.keys()), y=list(funnel_stages.values()), palette="coolwarm", ax=ax)
-    ax.set_title("Deal Conversion Funnel Stages")
-    ax.set_ylabel("Number of Messages (Keyword Matches)")
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
-    plt.tight_layout()
-    
-    return "Deal conversion insights:", fig
-
-
-# 5. Total Payments Extracted (Enhanced)
-def extract_total_paid_enhanced(df):
-    # Regex to capture numbers with optional currency symbols and various payment-related words
-    # It tries to be broad to catch amounts followed by or preceded by payment terms.
-    # This might capture some false positives, but it's a starting point.
-    
-    # Pattern for "RupeesNo paid", "1000 paid", "₹1000 paid", "Rs. 1000 paid"
-    # Pattern for "₹xxxx received", "Paid ₹xxxx", "Payment of xxxx done"
-    
-    # This regex attempts to capture numbers that are associated with payment/receipt actions.
-    # It looks for optional currency symbols (₹, $, £, Rs., INR), then a number,
-    # followed by words like 'paid', 'pays', 'received', 'payment', 'done', 'transfer', 'sent'.
-    # Or, it looks for these words followed by a number.
-    
-    # Let's refine the regex to be more specific to the user's examples:
-    # "RupeesNo paid" -> r'(?:Rupees|₹|Rs\.?|INR)\s*(\d+(?:[.,]\d+)?)\s*paid'
-    # "1000 paid" -> r'(\d+(?:[.,]\d+)?)\s*paid'
-    # "₹xxxx received" -> r'(?:₹|Rs\.?|INR)\s*(\d+(?:[.,]\d+)?)\s*received'
-    # "Paid ₹xxxx" -> r'paid\s*(?:₹|Rs\.?|INR)\s*(\d+(?:[.,]\d+)?)'
-    # "Payment of xxxx done" -> r'payment of\s*(\d+(?:[.,]\d+)?)\s*done'
-
-    # Combining these patterns for a more robust extraction
-    patterns = [
-        r'(?:Rupees|₹|Rs\.?|INR)\s*(\d+(?:[.,]\d+)?)\s*(?:paid|pays|received|done)', # e.g., "Rupees 1000 paid", "₹1000 received"
-        r'(\d+(?:[.,]\d+)?)\s*(?:paid|pays|received|done)', # e.g., "1000 paid"
-        r'(?:paid|pays|received)\s*(?:₹|Rs\.?|INR)\s*(\d+(?:[.,]\d+)?)', # e.g., "paid ₹1000"
-        r'payment of\s*(\d+(?:[.,]\d+)?)\s*done' # e.g., "payment of 1000 done"
-    ]
-    
-    total_amount = 0.0
-    extracted_details = []
-
-    for index, row in df.iterrows():
-        message_lower = row['message'].lower()
-        for pattern in patterns:
-            matches = re.findall(pattern, message_lower)
-            for match in matches:
-                try:
-                    amount = float(match.replace(',', '')) # Remove commas for conversion
-                    total_amount += amount
-                    extracted_details.append({
-                        'datetime': row['datetime'],
-                        'user': row['user'],
-                        'message': row['message'],
-                        'extracted_amount': amount
-                    })
-                except ValueError:
-                    # Skip if conversion to float fails
-                    continue
-    
-    return total_amount, extracted_details
-
-# 6. Client Sentiment Breakdown (using existing sentiment_trend)
-# This will be displayed in the UI by calling sentiment_trend and then highlighting specific days.
-
-# 7. Top 5 Repeated Issues
-def top_repeated_issues(df, top_k=5):
-    if df.empty:
-        return "No chat data to identify repeated issues."
-
-    issue_keywords = [
-        'late', 'cancelled', 'not working', 'problem', 'issue', 'broken', 'defect',
-        'delay', 'wrong', 'missing', 'unhappy', 'bad', 'poor', 'stuck', 'failed'
-    ]
-    
-    issue_counts = Counter()
-    
-    for message in df['message'].dropna().str.lower():
-        for keyword in issue_keywords:
-            if keyword in message:
-                issue_counts[keyword] += 1
-    
-    if not issue_counts:
-        return "No common issue keywords detected in the chat."
-
-    top_issues = issue_counts.most_common(top_k)
-    
-    issue_df = pd.DataFrame(top_issues, columns=['Issue Keyword', 'Frequency'])
-    
-    fig, ax = plt.subplots()
-    sns.barplot(x='Issue Keyword', y='Frequency', data=issue_df, palette='Reds_d', ax=ax)
-    ax.set_title(f'Top {top_k} Repeated Issue Keywords')
-    ax.set_ylabel('Frequency')
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
-    plt.tight_layout()
-    
-    return "Top repeated issues:", fig
-
-# 8. Working Hour Violation Detector
-def working_hour_violation_detector(df, start_hour=10, end_hour=19): # 10 AM to 7 PM
-    if df.empty:
-        return "No chat data to detect working hour violations."
-
-    violations = []
-    
-    for index, row in df.iterrows():
-        msg_hour = row['datetime'].hour
-        
-        # Check for messages outside working hours
-        if not (start_hour <= msg_hour < end_hour):
-            violations.append({
-                'datetime': row['datetime'],
-                'user': row['user'],
-                'message': row['message'],
-                'hour': msg_hour
-            })
-    
-    if not violations:
-        return f"No messages detected outside working hours ({start_hour}:00 - {end_hour}:00)."
-
-    violations_df = pd.DataFrame(violations)
-    
-    # Count violations per user
-    user_violations = violations_df['user'].value_counts()
-    
-    result_str = f"Detected {len(violations_df)} messages outside typical working hours ({start_hour}:00 - {end_hour}:00):\n"
-    for user, count in user_violations.items():
-        result_str += f"- **{user}**: {count} messages\n"
-    
-    st.write(result_str)
-    st.write("### Sample of Messages Outside Working Hours:")
-    st.dataframe(violations_df[['datetime', 'user', 'message', 'hour']].head(10)) # Show top 10
-
-    return "Working hour violations detected."
-
-# 9. Follow-Up Needed Flag
-def follow_up_needed_flag(df):
-    if df.empty:
-        return "No chat data to flag follow-ups."
-
-    follow_up_keywords = [
-        'still waiting', 'any update', 'hello?', 'where is', 'when will', 'chasing',
-        'response', 'reply', 'urgently', 'pending'
-    ]
-    
-    flagged_messages = []
-    
-    for index, row in df.iterrows():
-        message_lower = row['message'].lower()
-        if any(keyword in message_lower for keyword in follow_up_keywords):
-            flagged_messages.append({
-                'datetime': row['datetime'],
-                'user': row['user'],
-                'message': row['message']
-            })
-    
-    if not flagged_messages:
-        return "No messages flagged as needing follow-up based on keywords."
-
-    flagged_df = pd.DataFrame(flagged_messages).sort_values(by='datetime', ascending=False)
-    
-    st.write(f"**{len(flagged_df)} messages flagged as potentially needing follow-up:**")
-    st.dataframe(flagged_df[['datetime', 'user', 'message']])
-    
-    return "Messages flagged for follow-up."
-
-
-# 10. AI Auto-Responder Trainer (Conceptual)
-def ai_auto_responder_trainer(df):
-    st.write("This feature is conceptual and would involve training a custom AI model.")
-    st.markdown("""
-    To implement an **AI Auto-Responder Trainer**, you would typically:
-    1.  **Extract FAQs:** Identify common questions and their answers from your chat history.
-        * *Method:* Use clustering on message embeddings, or keyword extraction combined with AI summarization to find question-answer pairs.
-    2.  **Generate Template Answers:** Based on identified FAQs, generate concise and helpful template responses.
-        * *Method:* Use a large language model (like Gemini) to draft answers for common questions.
-    3.  **Train a Custom Chatbot:** Fine-tune a smaller language model or a retrieval-based chatbot on your specific chat data to learn your business's tone and common responses.
-        * *Method:* Requires a dataset of (question, answer) pairs and a suitable ML framework (e.g., TensorFlow, PyTorch).
-    
-    **Current Status:** This is beyond the scope of a real-time Streamlit app without a dedicated backend and significant computational resources for model training. However, the chat analysis (like common phrases, topics) provides foundational data for building such a system.
-    """)
-    st.info("The insights from 'Top 5 Repeated Issues' and 'Identify Key Topics' (under Advanced AI Chat Features) can serve as a starting point for identifying FAQs.")
-
-# 11. Smart Summary Generator (AI-based)
-def smart_summary_generator(df):
-    if df.empty:
-        return "No chat data to generate a smart summary."
-
-    # Gather key metrics
-    total_messages = len(df)
-    unique_users = df['user'].nunique()
-    
-    # Calculate sentiment (if not already done)
-    if 'polarity' not in df.columns:
-        df['polarity'] = df['message'].apply(lambda msg: TextBlob(msg).sentiment.polarity)
-    avg_sentiment = df['polarity'].mean()
-
-    # Get response time (overall)
-    avg_res_str, _ = calculate_response_times(df)
-    if avg_res_str is None:
-        avg_res_str = "N/A"
-
-    # Get message classification counts
-    message_types_business = {
-        'Inquiry': ['inquiry', 'question'],
-        'Order': ['order', 'buy'],
-        'Complaint': ['complaint', 'problem'],
-        'Confirmation': ['confirmed', 'ok'],
-        'Payment': ['paid', 'payment']
-    }
-    classified_counts = {k: 0 for k in message_types_business.keys()}
-    for message in df['message'].dropna().str.lower():
-        for msg_type, keywords in message_types_business.items():
-            if any(keyword in message for keyword in keywords):
-                classified_counts[msg_type] += 1
-                break
-
-    # Get total payments
-    total_payments, _ = extract_total_paid_enhanced(df)
-    
-    # Construct prompt for AI summary
-    prompt_data = f"""
-    Generate a concise business summary of the following WhatsApp chat data.
-    Focus on key operational metrics and insights.
-
-    Data points:
-    - Total messages: {total_messages}
-    - Unique participants: {unique_users}
-    - Average chat sentiment (polarity): {avg_sentiment:.2f}
-    - Overall average response time: {avg_res_str}
-    - Message type counts: {classified_counts}
-    - Total payments extracted: ₹{total_payments:,.2f}
-
-    Format: "In [Month/Period], you had [X] chats with [Y] clients. [Z] orders were closed, [A] complaints raised. Avg. response time: [B]."
-    Adjust the summary based on available data and make it sound professional and insightful.
-    """
-    
-    # Add sample chat for context if not too long
-    chat_sample = ' '.join(df['message'].dropna().tolist())
-    if len(chat_sample) > 2000:
-        chat_sample = chat_sample[:2000] + "..."
-    prompt_data += f"\n\nSample chat content: {chat_sample}"
-
-    try:
-        response = model.generate_content(prompt_data)
-        return response.text
-    except Exception as e:
-        return f"Error generating smart summary: {e}"
-
-
-# ===================== Streamlit App =====================
-st.set_page_config(layout='wide')
-st.title("🔐 WhatsApp Chat Analyzer - Login Required")
-
-menu = ["Login", "Register"]
-choice = st.sidebar.selectbox("Menu", menu)
-
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-if "page" not in st.session_state: # Initialize page state
-    st.session_state.page = "main_app" # Default to main analysis page
-if 'media_messages_count' not in st.session_state:
-    st.session_state['media_messages_count'] = 0
-
-
-if choice == "Login":
+# ===================== Streamlit UI =====================
+def show_login_page():
+    st.title("Login / Register")
     st.subheader("Login")
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-    if st.button("Login"):
-        if authenticate_user(username, password):
-            st.session_state.authenticated = True
-            st.session_state.username = username # Store username for personalized greetings
-            st.success(f"Welcome {username}!")
-            st.rerun() # Rerun to hide login form and show main content
-        else:
-            st.error("Invalid credentials")
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        col1, col2 = st.columns(2)
+        with col1:
+            login_button = st.form_submit_button("Login")
+        with col2:
+            register_page_button = st.form_submit_button("Go to Register")
 
-elif choice == "Register":
-    st.subheader("Create New Account")
-    new_user = st.text_input("New Username")
-    new_password = st.text_input("New Password", type="password")
-    if st.button("Register"):
-        if register_user(new_user, new_password):
-            st.success("Registration successful. Please log in.")
-        else:
-            st.error("Username already exists.")
-
-if not st.session_state.authenticated:
-    st.stop() # Stop execution if not authenticated
-
-# --- Main Application Logic (after authentication) ---
-
-# Define uploaded_file and df at a higher scope
-uploaded_file = st.file_uploader("📂 Upload your WhatsApp chat (.txt file)", type="txt")
-df = pd.DataFrame() # Initialize an empty DataFrame
-
-if uploaded_file is not None:
-    raw_text = uploaded_file.read().decode('utf-8')
-    df = preprocess_chat(raw_text) # preprocess_chat now updates st.session_state['media_messages_count']
-    if df.empty and st.session_state['media_messages_count'] == 0:
-        st.warning("⚠️ No valid messages found in the uploaded file after preprocessing (only media or empty).")
-        uploaded_file = None # Reset uploaded_file if no valid data
-    elif df.empty and st.session_state['media_messages_count'] > 0:
-        st.warning(f"⚠️ Only media messages ({st.session_state['media_messages_count']} found) in the uploaded file. No text messages to analyze.")
-        # We can still proceed with some stats if only media messages were there, but most analysis will be empty
-        df = pd.DataFrame(columns=['datetime', 'user', 'message', 'polarity']) # Ensure df is not truly empty for further checks
-
-# Navigation for pages
-st.sidebar.markdown("---")
-if st.sidebar.button("📊 Chat Analysis Dashboard"):
-    st.session_state.page = "main_app"
-if st.sidebar.button("💬 Launch Smart WhatsApp Tools"):
-    st.session_state.page = "smart_tools"
-if st.sidebar.button("❤️ Relationship Features"): # NEW MENU ITEM
-    st.session_state.page = "relationship_features"
-if st.sidebar.button("💼 Business Features"): # NEW BUSINESS MENU ITEM
-    st.session_state.page = "business_features"
-
-
-# Render pages based on session state
-if st.session_state.page == "smart_tools":
-    st.title("🚀 Smart WhatsApp Tools")
-
-    st.markdown("### 💬 AI-Assisted Messaging")
-    st.write("Generate message content or smart replies using AI.")
-
-    # Store generated messages in session state
-    if 'generated_message_content' not in st.session_state:
-        st.session_state.generated_message_content = ""
-    if 'suggested_smart_reply' not in st.session_state:
-        st.session_state.suggested_smart_reply = ""
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("#### Generate Message Content")
-        message_topic = st.text_input("What is the message about?", key="message_topic")
-        message_tone = st.selectbox("Select tone", ["neutral", "friendly", "formal", "urgent", "funny"], key="message_tone")
-        message_length = st.selectbox("Message Length", ["short", "medium", "long", "very long"], key="message_length")
-        add_emojis_option = st.checkbox("Add more emojis?", key="add_emojis_option") # New emoji checkbox
-
-        if st.button("Generate Message"):
-            if message_topic:
-                with st.spinner("Generating message..."):
-                    st.session_state.generated_message_content = generate_message_content(message_topic, message_tone, message_length, add_emojis_option)
-                    st.success("Generated Message:")
-                    st.write(st.session_state.generated_message_content)
+        if login_button:
+            if authenticate_user(username, password):
+                st.session_state['logged_in'] = True
+                st.session_state['username'] = username
+                st.success("Logged in successfully!")
+                st.experimental_rerun()
             else:
-                st.warning("Please enter a topic for the message.")
+                st.error("Invalid username or password.")
+        elif register_page_button:
+            st.session_state['page'] = 'register'
+            st.experimental_rerun()
 
-        # WhatsApp Web integration for generated message
-        if st.session_state.generated_message_content:
-            st.markdown("---")
-            st.subheader("Send Generated Message via WhatsApp")
-            whatsapp_link = f"https://wa.me/?text={st.session_state.generated_message_content.replace(' ', '%20')}"
-            st.markdown(f"[Click to Open WhatsApp (Web/App) with Message Pre-filled]({whatsapp_link})")
-            st.info("You'll need to select a contact and manually click send in WhatsApp.")
-
-            if PYWHATKIT_AVAILABLE:
-                st.write("Or, send directly using pywhatkit (requires desktop browser logged into WhatsApp Web):")
-                send_to_number = st.text_input("Enter recipient number (with country code, e.g., +91XXXXXXXXXX)", key="gen_num")
-                send_to_group = st.text_input("Enter Group ID (e.g., Gs1a2b3c4d5e6f7g8h9i)", key="gen_group")
-
-                if st.button("Send Message to Number (pywhatkit)", key="send_gen_num_btn"):
-                    if send_to_number and st.session_state.generated_message_content:
-                        try:
-                            kit.sendwhatmsg_instantly(send_to_number, st.session_state.generated_message_content, wait_time=15) # wait for 15 secs for browser to open
-                            st.success("Attempted to open WhatsApp Web and send message. Please check your browser.")
-                            st.warning("You might still need to press ENTER in WhatsApp to send the message.")
-                        except Exception as e:
-                            st.error(f"Error sending via pywhatkit: {e}. Ensure WhatsApp Web is logged in and browser is open.")
-                    else:
-                        st.warning("Please provide a number and generated message.")
-
-                if st.button("Send Message to Group (pywhatkit)", key="send_gen_group_btn"):
-                    if send_to_group and st.session_state.generated_message_content:
-                        try:
-                            kit.sendwhatmsg_to_group_instantly(send_to_group, st.session_state.generated_message_content, wait_time=15)
-                            st.success("Attempted to open WhatsApp Web and send message to group. Please check your browser.")
-                            st.warning("You might still need to press ENTER in WhatsApp to send the message.")
-                        except Exception as e:
-                            st.error(f"Error sending via pywhatkit: {e}. Ensure WhatsApp Web is logged in and browser is open.")
-                    else:
-                        st.warning("Please provide a group ID and generated message.")
+    st.subheader("Register")
+    with st.form("register_form"):
+        new_username = st.text_input("New Username")
+        new_password = st.text_input("New Password", type="password")
+        register_button = st.form_submit_button("Register")
+        if register_button:
+            if register_user(new_username, new_password):
+                st.success("Registration successful! You can now log in.")
             else:
-                st.info("Install `pywhatkit` to enable direct WhatsApp Web sending from this app (local only).")
+                st.error("Username already exists.")
 
+def show_main_app():
+    st.sidebar.title(f"Welcome, {st.session_state['username']}!")
+    if st.sidebar.button("Logout"):
+        st.session_state['logged_in'] = False
+        st.session_state['username'] = ""
+        st.experimental_rerun()
 
-    with col2:
-        st.markdown("#### Smart Reply Suggestion")
-        last_chat_message = st.text_input("Enter the last message received:", key="last_chat_message")
-        if st.button("Suggest Reply"):
-            if last_chat_message:
-                with st.spinner("Generating smart reply..."):
-                    st.session_state.suggested_smart_reply = generate_smart_reply(last_chat_message)
-                    st.success("Suggested Reply:")
-                    st.write(st.session_state.suggested_smart_reply)
-            else:
-                st.warning("Please enter the last message to get a suggestion.")
+    st.title("🤖 WhatsApp Chat Analyzer 💬")
 
-        # WhatsApp Web integration for smart reply
-        if st.session_state.suggested_smart_reply:
-            st.markdown("---")
-            st.subheader("Send Suggested Reply via WhatsApp")
-            whatsapp_link = f"https://wa.me/?text={st.session_state.suggested_smart_reply.replace(' ', '%20')}"
-            st.markdown(f"[Click to Open WhatsApp (Web/App) with Reply Pre-filled]({whatsapp_link})")
-            st.info("You'll need to select a contact and manually click send in WhatsApp.")
+    uploaded_file = st.file_uploader("Upload your WhatsApp chat (.txt) file", type=["txt"])
 
-            if PYWHATKIT_AVAILABLE:
-                st.write("Or, send directly using pywhatkit (requires desktop browser logged into WhatsApp Web):")
-                send_to_number_reply = st.text_input("Enter recipient number (with country code, e.g., +91XXXXXXXXXX)", key="reply_num")
-                send_to_group_reply = st.text_input("Enter Group ID (e.g., Gs1a2b3c4d5e6f7g8h9i)", key="reply_group")
+    if uploaded_file is not None:
+        raw_data = uploaded_file.read().decode("utf-8")
+        st.session_state['df'] = preprocess_chat(raw_data)
+        st.success("Chat file processed successfully!")
 
-                if st.button("Send Reply to Number (pywhatkit)", key="send_reply_num_btn"):
-                    if send_to_number_reply and st.session_state.suggested_smart_reply:
-                        try:
-                            kit.sendwhatmsg_instantly(send_to_number_reply, st.session_state.suggested_smart_reply, wait_time=15)
-                            st.success("Attempted to open WhatsApp Web and send reply. Please check your browser.")
-                            st.warning("You might still need to press ENTER in WhatsApp to send the message.")
-                        except Exception as e:
-                            st.error(f"Error sending via pywhatkit: {e}. Ensure WhatsApp Web is logged in and browser is open.")
-                    else:
-                        st.warning("Please provide a number and suggested reply.")
-
-                if st.button("Send Reply to Group (pywhatkit)", key="send_reply_group_btn"):
-                    if send_to_group_reply and st.session_state.suggested_smart_reply:
-                        try:
-                            kit.sendwhatmsg_to_group_instantly(send_to_group_reply, st.session_state.suggested_smart_reply, wait_time=15)
-                            st.success("Attempted to open WhatsApp Web and send reply to group. Please check your browser.")
-                            st.warning("You might still need to press ENTER in WhatsApp to send the message.")
-                        except Exception as e:
-                            st.error(f"Error sending via pywhatkit: {e}. Ensure WhatsApp Web is logged in and browser is open.")
-                    else:
-                        st.warning("Please provide a group ID and suggested reply.")
-            else:
-                st.info("Install `pywhatkit` to enable direct WhatsApp Web sending from this app (local only).")
-
-
-    st.markdown("---")
-    st.markdown("### 🕒 Repetitive Message Sender")
-    st.write("Send a message multiple times to a contact or group using pywhatkit.")
-
-    if PYWHATKIT_AVAILABLE:
-        repetitive_message_content = st.text_area("Message to send repeatedly", key="repetitive_msg_content")
+    if 'df' in st.session_state and not st.session_state['df'].empty:
+        df = st.session_state['df']
+        all_users = ['All Users'] + list(df['user'].unique())
         
-        col_rep_num, col_rep_group = st.columns(2)
-        with col_rep_num:
-            repetitive_send_to_number = st.text_input("Recipient Number (with country code, e.g., +91XXXXXXXXXX)", key="rep_num")
-        with col_rep_group:
-            repetitive_send_to_group = st.text_input("Recipient Group ID (e.g., Gs1a2b3c4d5e6f7g8h9i)", key="rep_group")
-
-        iteration_count = st.number_input("Number of times to send", min_value=1, max_value=10, value=1, step=1, key="iteration_count")
+        st.sidebar.header("Filter Data")
+        selected_users = st.sidebar.multiselect("Select Users", options=all_users, default=['All Users'])
         
-        st.warning("⚠️ **Important for Repetitive Messages:** `pywhatkit` opens a new browser tab for each message. Sending many messages rapidly may cause issues with WhatsApp Web or your browser. Use with caution.")
+        if 'All Users' in selected_users:
+            selected_users_for_filter = list(df['user'].unique())
+        else:
+            selected_users_for_filter = selected_users
 
-        if st.button(f"Send Repeatedly to Number ({iteration_count} times)", key="send_rep_num_btn"):
-            if repetitive_send_to_number and repetitive_message_content:
-                with st.spinner(f"Sending message {iteration_count} times to {repetitive_send_to_number}..."):
-                    for i in range(iteration_count):
-                        try:
-                            st.info(f"Sending message {i+1}/{iteration_count}...")
-                            kit.sendwhatmsg_instantly(repetitive_send_to_number, repetitive_message_content, wait_time=10) # Reduced wait_time slightly, but consider more for many iterations
-                            st.success(f"Message {i+1} sent successfully (attempted). Check your browser.")
-                        except Exception as e:
-                            st.error(f"Error sending message {i+1}: {e}. Ensure WhatsApp Web is logged in and browser is open.")
-                st.success("Repetitive message sending process completed.")
-            else:
-                st.warning("Please provide message content and a recipient number.")
+        min_date = df['datetime'].min().date()
+        max_date = df['datetime'].max().date()
         
-        if st.button(f"Send Repeatedly to Group ({iteration_count} times)", key="send_rep_group_btn"):
-            if repetitive_send_to_group and repetitive_message_content:
-                with st.spinner(f"Sending message {iteration_count} times to group {repetitive_send_to_group}..."):
-                    for i in range(iteration_count):
-                        try:
-                            st.info(f"Sending message {i+1}/{iteration_count}...")
-                            kit.sendwhatmsg_to_group_instantly(repetitive_send_to_group, repetitive_message_content, wait_time=10)
-                            st.success(f"Message {i+1} sent successfully (attempted). Check your browser.")
-                        except Exception as e:
-                            st.error(f"Error sending message {i+1} to group: {e}. Ensure WhatsApp Web is logged in and browser is open.")
-                st.success("Repetitive group message sending process completed.")
-            else:
-                st.warning("Please provide message content and a recipient group ID.")
-    else:
-        st.info("Install `pywhatkit` to enable this feature (local only).")
+        date_range = st.sidebar.date_input(
+            "Select Date Range",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date
+        )
 
-
-    st.markdown("---")
-    st.markdown("### ⏲️ Timer Message (Simulation - with enhanced scheduling)")
-    st.write("Simulate scheduling a message for later delivery.")
-    future_msg_text = st.text_area("Your message to schedule", key="future_msg_text")
-
-    col_date, col_time = st.columns(2)
-    with col_date:
-        send_date = st.date_input("Set send date", datetime.now().date(), key="send_date")
-    with col_time:
-        send_time = st.time_input("Set send time (HH:MM, 24-hour format)", datetime.now().time(), key="send_time_input")
-
-    # Combine date and time
-    try:
-        schedule_datetime = datetime.combine(send_date, send_time)
-    except TypeError: # Handle case where time_input might return a string
-        schedule_datetime = datetime.combine(send_date, datetime.strptime(str(send_time), '%H:%M:%S').time())
-
-    if st.button("🕒 Schedule Message (Simulated)", key="schedule_button"):
-        current_datetime = datetime.now()
-
-        if schedule_datetime > current_datetime:
-            time_diff = schedule_datetime - current_datetime
-            st.success(f"Message '{future_msg_text}' scheduled for {schedule_datetime.strftime('%Y-%m-%d %H:%M')}. (This is a simulation.)")
-            st.info(f"Time until 'delivery': {time_diff}")
-            st.warning("Note: This is a simulation. Actual scheduled sending on WhatsApp would require the WhatsApp Business API or complex background processes, which are beyond a simple Streamlit web app.")
+        if len(date_range) == 2:
+            start_date, end_date = date_range[0], date_range[1]
         else:
-            st.error("Scheduled time must be in the future.")
+            start_date, end_date = None, None # Or handle single date selection as needed
 
-
-    st.markdown("---")
-    st.markdown("### 🎭 Voice Message Changer (Experimental - Placeholder)")
-    st.write("This feature would require advanced audio processing capabilities and specific SDKs.")
-    voice = st.file_uploader("Upload a voice message (.wav)", type=["wav"])
-    if voice:
-        voice_type = st.selectbox("Choose new voice", ["Robot", "Male", "Female", "Alien"])
-        st.audio(voice, format="audio/wav")
-        if st.button("Transform Voice"):
-            st.info(f"Voice transformed to {voice_type}. (placeholder - needs TTS/Voice SDK)")
-
-    st.markdown("---")
-    st.markdown("### 🛠️ More WhatsApp-like Features (Simulations)")
-
-    st.markdown("#### Quick Status Update")
-    status_text = st.text_input("What's on your mind? (Simulated WhatsApp Status)")
-    if st.button("Post Status"):
-        if status_text:
-            st.info(f"Your status: '{status_text}' has been 'posted'.")
-        else:
-            st.warning("Please enter some text for your status.")
-
-    st.markdown("#### Share Location (Mockup)")
-    if st.button("📍 Share Live Location"):
-        st.info("Simulating sharing your live location for 15 minutes. (This is a mockup and does not share your actual location.)")
-
-    st.markdown("#### Create Poll (Mockup)")
-    poll_question = st.text_input("Poll Question:")
-    poll_options_input = st.text_area("Enter poll options, one per line:")
-    if st.button("Create Poll"):
-        if poll_question and poll_options_input:
-            options = [opt.strip() for opt in poll_options_input.split('\n') if opt.strip()]
-            if options:
-                st.info(f"Poll created! Question: '{poll_question}', Options: {', '.join(options)}")
-                st.markdown("*(This is a mockup. No actual poll is created.)*")
-            else:
-                st.warning("Please enter at least one poll option.")
-        else:
-            st.warning("Please enter a poll question and options.")
-
-
-elif st.session_state.page == "main_app": # This block now handles the main analysis dashboard
-    st.title("📊 Chat Analysis Dashboard")
-    st.write("Upload your WhatsApp chat file to get insights.")
-
-    if df.empty and st.session_state['media_messages_count'] == 0:
-        st.warning("⚠️ Please upload a WhatsApp chat file above to start the analysis.")
-    else:
-        st.sidebar.header("🧮 Choose Analysis")
-        all_users = df['user'].unique().tolist()
-        selected_users = st.sidebar.multiselect("👤 Filter by User(s)", all_users)
-        start_date = st.sidebar.date_input("📅 Start Date", value=df['datetime'].min().date() if not df.empty else datetime.now().date())
-        end_date = st.sidebar.date_input("📅 End Date", value=df['datetime'].max().date() if not df.empty else datetime.now().date())
-        filtered_df = filter_data(df, selected_users, start_date, end_date) # Use a new variable for filtered df
-
-        st.header("Overall Chat Statistics")
-        total_text_messages = len(filtered_df)
-        total_messages_incl_media = total_text_messages + st.session_state['media_messages_count']
-
-        col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
-        with col_stat1:
-            st.metric("Total Messages (Text+Media)", total_messages_incl_media)
-        with col_stat2:
-            st.metric("Text Messages Analyzed", total_text_messages)
-        with col_stat3:
-            st.metric("Unique Participants", filtered_df['user'].nunique() if not filtered_df.empty else 0)
-        with col_stat4:
-            st.metric("Avg. Msgs/Day (Text Only)", f"{filtered_df.groupby(filtered_df['datetime'].dt.date).size().mean():.2f}" if not filtered_df.empty else "N/A")
-
-
-        if st.sidebar.checkbox("📊 Message Type Distribution"):
-            st.subheader("📄 Message Type Distribution (Text vs. Media)")
-            fig_type, msg_type_error = message_type_distribution(total_text_messages, st.session_state['media_messages_count'])
-            if fig_type:
-                st.pyplot(fig_type)
-            else:
-                st.info(msg_type_error)
-
-
+        filtered_df = filter_data(df.copy(), selected_users_for_filter, start_date, end_date)
+        
         if filtered_df.empty:
-            st.warning("No text messages found for the selected filters. Some analyses may not be available.")
+            st.warning("No data matches the selected filters. Please adjust your selections.")
+            return
+
+        st.subheader("Filtered Chat Data Preview")
+        if st.checkbox("Show Raw Filtered Data"):
+            st.dataframe(filtered_df)
+
+        total_text_messages = len(filtered_df)
+        total_media_messages = st.session_state.get('media_messages_count', 0)
+        
+        st.markdown(f"Total Messages (Text): **{total_text_messages}**")
+        st.markdown(f"Total Messages (Media Omitted): **{total_media_messages}**")
+
+        st.markdown("---")
+        st.header("📊 Chat Analysis & Visualization")
+
+        st.subheader("Message Type Distribution")
+        fig_msg_type, msg_type_error = message_type_distribution(total_text_messages, total_media_messages)
+        if fig_msg_type:
+            st.pyplot(fig_msg_type)
         else:
-            if st.sidebar.checkbox("📄 Show Raw Data"):
-                st.subheader("Raw Chat Data (Filtered Text Messages)")
-                st.dataframe(filtered_df)
+            st.info(msg_type_error)
+        
+        st.subheader("User-Specific Statistics")
+        avg_lengths, daily_counts = user_message_stats(filtered_df)
+        st.write("Average Message Length per User (characters):")
+        st.dataframe(avg_lengths)
+        st.write("Average Messages per Day per User:")
+        st.dataframe(daily_counts)
 
-            if st.sidebar.checkbox("📊 User-Specific Stats"):
-                st.subheader("📈 User Message Stats")
-                avg_lengths, avg_msgs_per_day = user_message_stats(filtered_df)
-                st.write("**📏 Avg. Message Length by User:**")
-                st.dataframe(avg_lengths.rename("Avg Length"))
-                st.write("**📆 Avg. Messages per Day by User:**")
-                st.dataframe(avg_msgs_per_day.rename("Avg Msgs/Day"))
+        st.subheader("Sentiment Analysis")
+        user_sentiment = sentiment_analysis(filtered_df.copy()) # Pass a copy to avoid modifying original df state
+        st.write("Average Sentiment Polarity per User (1.0 = most positive, -1.0 = most negative):")
+        st.dataframe(user_sentiment)
 
-            if st.sidebar.checkbox("🎭 Sentiment Analysis"):
-                st.subheader("🎯 Sentiment Analysis by User")
-                # Ensure 'polarity' is calculated for filtered_df if sentiment analysis is selected
-                filtered_df['polarity'] = filtered_df['message'].apply(lambda msg: TextBlob(msg).sentiment.polarity)
-                sentiments = sentiment_analysis(filtered_df)
-                st.write("**User Sentiment Polarity (−1 = Negative, +1 = Positive):**")
-                st.dataframe(sentiments.rename("Polarity"))
-                most_pos = sentiments.idxmax()
-                most_neg = sentiments.idxmin()
+        st.subheader("Most Positive and Negative Messages")
+        positive_messages = filtered_df[filtered_df['polarity'] > 0.5].sort_values(by='polarity', ascending=False).head(5)
+        negative_messages = filtered_df[filtered_df['polarity'] < -0.2].sort_values(by='polarity', ascending=True).head(5)
 
-                st.success(f"😊 Most Positive User: {most_pos} ({sentiments.max():.2f})")
-                st.error(f"😠 Most Negative User: {most_neg} ({sentiments.min():.2f})")
+        if not positive_messages.empty:
+            st.write("Top 5 Most Positive Messages:")
+            for idx, row in positive_messages.iterrows():
+                st.info(f"**{row['user']}** ({row['datetime'].strftime('%Y-%m-%d %H:%M')}): {row['message']} (Polarity: {row['polarity']:.2f})")
+        else:
+            st.info("No significantly positive messages found in the filtered data.")
 
-                st.subheader(f"🔍 Messages Contributing to Negative Sentiment for {most_neg}")
-                neg_msgs = filtered_df[(filtered_df['user'] == most_neg) & (filtered_df['polarity'] < 0)].sort_values(by='polarity')
-                if neg_msgs.empty:
-                    st.info("No clearly negative messages were found for this user.")
-                else:
-                    st.markdown(f"These are the messages from **{most_neg}** with negative sentiment scores, which contributed to their overall polarity of **{sentiments[most_neg]:.2f}**.")
-                    st.dataframe(neg_msgs[['datetime', 'message', 'polarity']].reset_index(drop=True))
+        if not negative_messages.empty:
+            st.write("Top 5 Most Negative Messages:")
+            for idx, row in negative_messages.iterrows():
+                st.warning(f"**{row['user']}** ({row['datetime'].strftime('%Y-%m-%d %H:%M')}): {row['message']} (Polarity: {row['polarity']:.2f})")
+        else:
+            st.info("No significantly negative messages found in the filtered data.")
 
+        st.subheader("Sentiment Trend Over Time")
+        daily_sentiment = sentiment_trend(filtered_df.copy())
+        if not daily_sentiment.empty:
+            fig_sentiment_trend = plt.figure(figsize=(10, 6))
+            plt.plot(daily_sentiment['date'], daily_sentiment['polarity'])
+            plt.title('Average Sentiment Polarity Over Time')
+            plt.xlabel('Date')
+            plt.ylabel('Average Polarity')
+            plt.grid(True)
+            st.pyplot(fig_sentiment_trend)
+        else:
+            st.info("Not enough data to show sentiment trend.")
 
-                st.subheader(f"✨ Positive Messages from {most_pos}")
-                pos_msgs = filtered_df[(filtered_df['user'] == most_pos) & (filtered_df['polarity'] > 0)].sort_values(by='polarity', ascending=False)
-                if pos_msgs.empty:
-                    st.info("No clearly positive messages were found for this user.")
-                else:
-                    st.dataframe(pos_msgs[['datetime', 'message', 'polarity']].reset_index(drop=True))
+        st.subheader("Overall Chat Tone/Mood (AI Analysis)")
+        full_filtered_chat_text = ' '.join(filtered_df['message'].dropna().tolist())
+        if full_filtered_chat_text:
+            with st.spinner("Analyzing overall chat tone..."):
+                overall_tone = analyze_overall_chat_tone(full_filtered_chat_text)
+                st.write(overall_tone)
+        else:
+            st.info("No text available to analyze overall chat tone.")
 
-                # New: Sentiment Trend over Time
-                st.subheader("📈 Sentiment Trend Over Time")
-                sentiment_trend_data = sentiment_trend(filtered_df)
-                if not sentiment_trend_data.empty:
-                    fig_sentiment, ax_sentiment = plt.subplots(figsize=(10, 5))
-                    sns.lineplot(x='date', y='polarity', data=sentiment_trend_data, ax=ax_sentiment)
-                    ax_sentiment.set_title('Average Daily Sentiment Polarity')
-                    ax_sentiment.set_xlabel('Date')
-                    ax_sentiment.set_ylabel('Average Polarity')
-                    ax_sentiment.axhline(0, color='grey', linestyle='--', linewidth=0.8)
-                    st.pyplot(fig_sentiment)
-                else:
-                    st.info("Not enough data to plot sentiment trend.")
+        st.subheader("Multi-User Comparison: Total Messages")
+        user_msg_counts = user_frequency(filtered_df)
+        fig_user_counts = plt.figure(figsize=(10, 6))
+        sns.barplot(x=user_msg_counts.index, y=user_msg_counts.values)
+        plt.title('Total Messages by User')
+        plt.xlabel('User')
+        plt.ylabel('Number of Messages')
+        plt.xticks(rotation=45, ha='right')
+        st.pyplot(fig_user_counts)
+        
+        st.subheader("Activity Breakdown")
+        
+        st.write("Weekly Activity:")
+        weekly_counts = weekly_activity(filtered_df)
+        fig_weekly = plt.figure(figsize=(8, 5))
+        sns.barplot(x=weekly_counts.index, y=weekly_counts.values,
+                    order=['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'])
+        plt.title('Messages by Day of Week')
+        plt.xlabel('Day of Week')
+        plt.ylabel('Number of Messages')
+        st.pyplot(fig_weekly)
 
+        st.write("Monthly Activity:")
+        monthly_counts = monthly_activity(filtered_df)
+        fig_monthly = plt.figure(figsize=(12, 6))
+        sns.lineplot(x=monthly_counts.index, y=monthly_counts.values, marker='o')
+        plt.title('Messages by Month')
+        plt.xlabel('Month')
+        plt.ylabel('Number of Messages')
+        plt.xticks(rotation=45, ha='right')
+        st.pyplot(fig_monthly)
 
-            if st.sidebar.checkbox("📊 Multi-User Comparison"):
-                st.subheader("🔄 Multi-User Message Comparison")
-                user_counts = filtered_df['user'].value_counts()
-                fig, ax = plt.subplots()
-                sns.barplot(x=user_counts.index, y=user_counts.values, ax=ax, palette="coolwarm")
-                ax.set_title("Messages per User")
-                ax.set_ylabel("Messages")
-                ax.set_xticklabels(user_counts.index, rotation=45, ha='right')
-                st.pyplot(fig)
+        st.write("Hourly Activity:")
+        hourly_counts = hourly_distribution(filtered_df)
+        fig_hourly = plt.figure(figsize=(10, 6))
+        sns.lineplot(x=hourly_counts.index, y=hourly_counts.values, marker='o')
+        plt.title('Messages by Hour of Day')
+        plt.xlabel('Hour of Day (24-hour format)')
+        plt.ylabel('Number of Messages')
+        plt.xticks(range(0, 24))
+        plt.grid(True)
+        st.pyplot(fig_hourly)
 
-            if st.sidebar.checkbox("📅 Weekly Activity"):
-                st.subheader("🗓️ Weekly Chat Activity")
-                weekly = weekly_activity(filtered_df)
-                fig, ax = plt.subplots()
-                sns.barplot(x=weekly.index, y=weekly.values, palette='viridis', ax=ax)
-                ax.set_ylabel("Message Count")
-                ax.set_xlabel("Day")
-                st.pyplot(fig)
+        st.write("Activity Heatmap (Messages by Hour and Day):")
+        heatmap_df = heatmap_data(filtered_df)
+        fig_heatmap = plt.figure(figsize=(12, 8))
+        sns.heatmap(heatmap_df, cmap='viridis', annot=True, fmt=".0f", linewidths=.5)
+        plt.title('Message Activity Heatmap')
+        plt.xlabel('Hour of Day')
+        plt.ylabel('Day of Week')
+        st.pyplot(fig_heatmap)
 
-            if st.sidebar.checkbox("📆 Monthly Activity"):
-                st.subheader("📈 Monthly Chat Activity")
-                monthly = monthly_activity(filtered_df)
-                fig, ax = plt.subplots()
-                monthly.plot(kind='bar', color='skyblue', ax=ax)
-                ax.set_ylabel("Messages")
-                ax.set_xlabel("Month")
-                st.pyplot(fig)
+        st.subheader("Top Active Hours by Day of Week")
+        active_hours_table = active_hours_by_day(filtered_df)
+        st.dataframe(active_hours_table)
 
-            if st.sidebar.checkbox("🕒 Hourly Activity"):
-                st.subheader("⌛ Most Active Hours")
-                hourly = hourly_distribution(filtered_df)
-                fig, ax = plt.subplots()
-                sns.lineplot(x=hourly.index, y=hourly.values, marker='o', ax=ax)
-                ax.set_xticks(range(0, 24))
-                ax.set_xlabel("Hour of Day")
-                ax.set_ylabel("Message Count")
-                st.pyplot(fig)
-            
-            # New: Top Active Hours List
-            if st.sidebar.checkbox("🔝 Top Active Hours (List)"):
-                st.subheader("⏱️ Top 5 Most Active Hours (by message count)")
-                top_hours = top_active_hours_list(filtered_df, top_k=5)
-                if isinstance(top_hours, str):
-                    st.info(top_hours)
-                else:
-                    st.dataframe(top_hours.rename("Message Count"))
+        st.subheader("Text Analysis")
+        st.write("Most Common Words (excluding stopwords):")
+        st.dataframe(pd.DataFrame(common_words(filtered_df), columns=['Word', 'Count']))
 
+        st.write("Word Cloud:")
+        wordcloud_img = generate_wordcloud(filtered_df)
+        fig_wordcloud = plt.figure(figsize=(10, 5))
+        plt.imshow(wordcloud_img, interpolation='bilinear')
+        plt.axis('off')
+        st.pyplot(fig_wordcloud)
 
-            if st.sidebar.checkbox("📊 Activity Heatmap"):
-                st.subheader("🔥 Activity Heatmap (Messages per Hour by Day)")
-                pivot = heatmap_data(filtered_df)
-                fig, ax = plt.subplots(figsize=(12, 6))
-                sns.heatmap(pivot, cmap="YlGnBu", ax=ax, linewidths=0.5)
-                ax.set_title("Messages per Hour by Day")
-                st.pyplot(fig)
+        st.write("Top Emojis Used:")
+        emojis_df = pd.DataFrame(emoji_counter(filtered_df), columns=['Emoji', 'Count'])
+        if not emojis_df.empty:
+            st.dataframe(emojis_df)
+            fig_emojis = plt.figure(figsize=(8, 5))
+            sns.barplot(x='Emoji', y='Count', data=emojis_df)
+            plt.title('Top Emojis Used')
+            st.pyplot(fig_emojis)
+        else:
+            st.info("No emojis found in the filtered data.")
+        
+        st.subheader("Conversation Starters (AI Analysis)")
+        starters = detect_conversation_starters(filtered_df)
+        if starters:
+            st.write("Potential conversation starting messages:")
+            for s in starters:
+                st.write(f"- \"{s}\"")
+        else:
+            st.info(starters[0] if isinstance(starters, list) else starters)
 
-            # New: Most Active Hours by Day of Week
-            if st.sidebar.checkbox("📊 Active Hours by Day of Week"):
-                st.subheader("🔥 Most Active Hours by Day of Week")
-                active_hours_data = active_hours_by_day(filtered_df)
-                fig_active_hours, ax_active_hours = plt.subplots(figsize=(12, 7))
-                sns.heatmap(active_hours_data, cmap="YlGnBu", ax=ax_active_hours, linewidths=0.5, fmt='g')
-                ax_active_hours.set_title('Message Count Heatmap (Day vs. Hour)')
-                ax_active_hours.set_xlabel('Hour of Day')
-                ax_active_hours.set_ylabel('Day of Week')
-                st.pyplot(fig_active_hours)
-
-
-            if st.sidebar.checkbox("🗣️ Most Common Words"):
-                st.subheader("💬 Most Common Words")
-                common = common_words(filtered_df)
-                common_df = pd.DataFrame(common, columns=['Word', 'Frequency'])
-                st.dataframe(common_df)
-
-            # New: Most Common Phrases
-            if st.sidebar.checkbox("🗣️ Most Common Phrases"):
-                st.subheader("💬 Most Common Phrases (N-word)")
-                num_words_phrase = st.slider("Phrase Length (N-gram)", min_value=2, max_value=4, value=2, key="phrase_length_slider")
-                top_k_phrases = st.slider("Top K Phrases", min_value=5, max_value=20, value=10, key="top_k_phrases_slider")
-
-                common_phr = common_phrases(filtered_df, num_words_phrase, top_k_phrases)
-                if common_phr:
-                    phrases_df = pd.DataFrame([(" ".join(phrase), count) for phrase, count in common_phr], columns=['Phrase', 'Frequency'])
-                    st.dataframe(phrases_df)
-                else:
-                    st.info("Not enough data to find common phrases or no phrases found.")
-
-
-            if st.sidebar.checkbox("☁️ Word Cloud"):
-                st.subheader("☁️ Word Cloud")
-                wc = generate_wordcloud(filtered_df)
-                fig, ax = plt.subplots()
-                ax.imshow(wc, interpolation='bilinear')
-                ax.axis('off')
-                st.pyplot(fig)
-
-            if st.sidebar.checkbox("🙋 Chat Frequency by User"):
-                st.subheader("📊 Chat Frequency by User")
-                freq = user_frequency(filtered_df)
-                fig, ax = plt.subplots()
-                sns.barplot(x=freq.index, y=freq.values, palette='Set2', ax=ax)
-                ax.set_xticklabels(freq.index, rotation=45, ha='right')
-                ax.set_ylabel("Messages")
-                st.pyplot(fig)
-
-            if st.sidebar.checkbox("😂 Emoji Usage"):
-                st.subheader("😂 Top Emojis Used")
-                emojis = emoji_counter(filtered_df)
-                emoji_df = pd.DataFrame(emojis, columns=['Emoji', 'Count'])
-                st.dataframe(emoji_df)
-
-            if st.sidebar.checkbox("🔮 Predict Busiest Month"):
-                st.subheader("📅 Predicted Busiest Upcoming Month")
-                month, forecast, reason = predict_busiest_month(filtered_df)
-                if month:
-                    st.success(f"🚀 Predicted busiest month is: **{month}**")
-                    st.write(reason)
-                    st.line_chart(forecast)
-                else:
-                    st.warning(reason)
-
-            if st.sidebar.checkbox("💬 Predict Future Messages"):
-                st.subheader("🗯️ AI-Predicted Future Messages")
-                predictions = generate_future_messages(filtered_df)
-                for msg in predictions:
-                    st.write(f"• {msg}")
-
-            if st.sidebar.checkbox("💡 Predict Future Words"):
-                st.subheader("🔤 Predicted Future Words")
-                predicted_words = predict_future_words(filtered_df)
-                st.write(" ".join(predicted_words))
-
-            if st.sidebar.checkbox("🗓️ Predict Most Active Days"):
-                st.subheader("🗓️ Likely Active Weekdays")
-                days, reason = predict_active_days(filtered_df)
-                st.info(reason)
-
-            if st.sidebar.checkbox("⏳ Predict Most Active Hours"):
-                st.subheader("⏰ Likely Active Hours")
-                hours, reason = predict_active_hours(filtered_df)
-                st.info(reason)
-
-            if st.sidebar.checkbox("📈 Message Volume Trend"):
-                st.subheader("📉 Message Trend Analysis")
-                st.info(detect_message_trend(filtered_df))
-
-
-elif st.session_state.page == "relationship_features": # RELATIONSHIP FEATURES PAGE
-    st.title("❤️ Relationship Features")
-    st.write("Analyze your chat with your partner to gain insights into your relationship dynamics.")
-    st.warning("⚠️ **Disclaimer:** These analyses are generated by AI and heuristics based on textual patterns in your chat. They are for entertainment and insight purposes only and cannot fully capture the complexities of human relationships. Do not use them as the sole indicator of your relationship's health.")
-
-    if df.empty:
-        st.warning("Please upload a WhatsApp chat file on the 'Chat Analysis Dashboard' page to enable these features.")
-    elif df['user'].nunique() != 2:
-        st.warning("This section is designed for chats between exactly two participants. Please upload a two-person chat export for accurate analysis.")
-    else:
-        # Pre-calculate polarity for all relationship features
-        df['polarity'] = df['message'].apply(lambda msg: TextBlob(msg).sentiment.polarity)
+        st.subheader("Most Common Phrases (2-word)")
+        phrases = common_phrases(filtered_df, n=2)
+        if phrases:
+            st.dataframe(pd.DataFrame(phrases, columns=['Phrase', 'Count']))
+        else:
+            st.info("Not enough data to detect common phrases.")
+        
+        st.subheader("Recurring Chat Habits (AI Analysis)")
+        chat_habits = identify_chat_habits(filtered_df)
+        for habit in chat_habits:
+            st.write(f"- {habit}")
 
         st.markdown("---")
-        st.markdown("### ❤️ Love Score & Overall Dynamics (AI)")
+        st.header("🔮 Predictive Insights")
+
+        st.subheader("Predict Busiest Month (ARIMA Model)")
+        busiest_month, forecast_data, explanation = predict_busiest_month(filtered_df.copy())
+        if busiest_month:
+            st.success(f"The busiest month predicted is: **{busiest_month}**")
+            st.info(explanation)
+            if forecast_data is not None:
+                st.write("Monthly Forecast:")
+                st.dataframe(forecast_data.to_frame(name='Predicted Messages'))
+        else:
+            st.info(explanation)
+
+        st.subheader("Predict Future Messages (AI Generated)")
+        num_sentences_to_generate = st.slider("Number of future messages to generate:", 1, 10, 3)
+        if st.button("Generate Future Messages"):
+            with st.spinner("Generating..."):
+                future_messages = generate_future_messages(filtered_df)
+                for i, msg in enumerate(future_messages[:num_sentences_to_generate]):
+                    st.write(f"**Predicted Message {i+1}:** {msg}")
         
-        if st.button("Calculate Love Score & Dynamics"):
-            with st.spinner("Analyzing your chat for love score and dynamics... This may take a moment."):
-                # Love Score
-                status, score, explanation, recommendations = calculate_love_score(df) # Use df directly, as filtering is not typical for this feature
-                if status == "Success":
-                    if score is not None:
-                        st.subheader(f"Your Relationship Love Score: {score}/100 ❤️")
-                        st.markdown("---")
-                        st.subheader("Detailed Explanation:")
-                        st.write(explanation)
-                        st.markdown("---")
-                        st.subheader("Recommendations:")
-                        st.write(recommendations)
-                    else:
-                        st.error("Could not determine a love score from the AI analysis. Please try again with a longer or more active chat.")
-                else:
-                    st.error(status)
-        
+        st.subheader("Predict Future Words (AI Generated)")
+        num_words_to_generate = st.slider("Number of future words to predict:", 5, 20, 10)
+        if st.button("Predict Future Words"):
+            with st.spinner("Predicting..."):
+                future_words = predict_future_words(filtered_df)
+                st.write(f"**Predicted Word Sequence:** {' '.join(future_words[:num_words_to_generate])}")
+
+
+        st.subheader("Predict Most Active Days")
+        active_days, active_days_msg = predict_active_days(filtered_df)
+        st.success(active_days_msg)
+
+        st.subheader("Predict Most Active Hours")
+        active_hours, active_hours_msg = predict_active_hours(filtered_df)
+        st.success(active_hours_msg)
+
+        st.subheader("Message Volume Trend")
+        trend_message = detect_message_trend(filtered_df)
+        st.info(trend_message)
+
         st.markdown("---")
-        if st.checkbox("📈 Relationship Timeline Insights"):
+        st.header("❤️ Relationship Insights (Beta) ❤️")
+        st.info("These insights are best for chats with only two participants.")
+
+        num_chat_participants = filtered_df['user'].nunique()
+        if num_chat_participants == 2:
             st.subheader("Relationship Timeline Insights")
-            first_msg_date, total_days_chatted, longest_gap, longest_streak = calculate_relationship_timeline_insights(df)
+            first_msg_date, days_active, longest_gap, longest_streak = calculate_relationship_timeline_insights(filtered_df)
             if first_msg_date:
-                st.write(f"**First Message Date:** {first_msg_date}")
-                st.write(f"**Total Days Chatting:** {total_days_chatted} days")
-                st.write(f"**Longest Gap Between Replies (between different users):** {longest_gap}")
-                st.write(f"**Longest Consistent Daily Chatting Streak:** {longest_streak} days")
+                st.write(f"First message date: **{first_msg_date.strftime('%Y-%m-%d')}**")
+                st.write(f"Total days with activity: **{days_active} days**")
+                st.write(f"Longest gap between replies: **{longest_gap}**")
+                st.write(f"Longest consecutive daily chatting streak: **{longest_streak} days**")
             else:
-                st.info("Not enough data to generate relationship timeline insights.")
-            
-        st.markdown("---")
-        if st.checkbox("💬 Conversation Balance"):
+                st.info("Not enough data to determine relationship timeline insights.")
+
             st.subheader("Conversation Balance")
-            dominance_text, longer_msgs_user, longer_msgs_avg, initiator_text, user_counts = get_conversation_balance(df)
-            if dominance_text and user_counts is not None and len(user_counts) == 2:
-                st.write(dominance_text)
-                st.write(f"**User who sends longer messages on average:** **{longer_msgs_user}** (Avg. length: {longer_msgs_avg:.2f} chars)")
-                st.write(initiator_text)
-
-                fig_balance, ax_balance = plt.subplots()
-                ax_balance.pie(user_counts.values, labels=user_counts.index, autopct='%1.1f%%', startangle=90, colors=['#ff9999','#66b3ff'])
-                ax_balance.axis('equal') # Equal aspect ratio ensures that pie is drawn as a circle.
-                st.pyplot(fig_balance)
-
-            else:
-                st.info(dominance_text) # This will output the error message
-
-        st.markdown("---")
-        if st.checkbox("💖 Top 5 Most Positive Messages"):
-            st.subheader("Top 5 Most Positive Messages")
-            romantic_msgs = top_romantic_messages(df)
-            if not romantic_msgs.empty:
-                for index, row in romantic_msgs.iterrows():
-                    st.markdown(f"**{row['user']}** on {row['datetime'].strftime('%Y-%m-%d %H:%M')}:")
-                    st.info(f"\"{row['message']}\" (Polarity: {row['polarity']:.2f})")
-            else:
-                st.info("No significantly positive messages found to highlight.")
-
-        st.markdown("---")
-        if st.checkbox("⏳ Response Time Patterns (Per User)"):
-            st.subheader("Response Time Patterns (Per User)")
-            avg_res_readable, avg_res_sec, fastest_replier = calculate_response_times_per_user(df)
-            if isinstance(avg_res_readable, str):
-                st.info(avg_res_readable)
-            else:
-                st.write("**Average Response Times:**")
-                for user, time_str in avg_res_readable.items():
-                    st.write(f"- **{user}:** {time_str}")
+            balance_text, longer_msgs_user, longer_msgs_avg, initiator_text, user_message_counts = get_conversation_balance(filtered_df)
+            st.write(balance_text)
+            if longer_msgs_user:
+                st.write(f"**{longer_msgs_user}** tends to send longer messages (avg. {longer_msgs_avg:.0f} chars).")
+            st.write(initiator_text)
+            
+            st.subheader("Response Times Per User")
+            avg_response_readable, avg_response_sec_per_user, fastest_replier = calculate_response_times_per_user(filtered_df)
+            if isinstance(avg_response_readable, dict):
+                for user, time_str in avg_response_readable.items():
+                    st.write(f"Average response time for **{user}**: {time_str}")
                 if fastest_replier:
-                    st.success(f"**Fastest Replier:** {fastest_replier}")
-                else:
-                    st.info("Could not determine the fastest replier.")
-        
-        st.markdown("---")
-        if st.checkbox("🧠 Personality Traits (AI-based Guess)"):
-            st.subheader("Personality Traits (AI-based Guess)")
-            personality_output = guess_personality_traits(df)
-            st.write(personality_output)
+                    st.success(f"**{fastest_replier}** is the fastest replier!")
+            else:
+                st.info(avg_response_readable)
 
-        st.markdown("---")
-        if st.checkbox("📌 Conflict & Recovery Patterns"):
-            st.subheader("Conflict & Recovery Patterns")
-            conflict_recovery_status = detect_conflict_and_recovery(df)
-            st.write(conflict_recovery_status)
+            st.subheader("Love Score (AI Analysis)")
+            if st.button("Calculate Love Score"):
+                with st.spinner("Calculating love score... This may take a moment."):
+                    status, score, explanation, recommendations = calculate_love_score(filtered_df.copy())
+                    if status == "Success" and score is not None:
+                        st.metric(label="Love Score", value=f"{score}/100")
+                        st.subheader("Explanation")
+                        st.write(explanation)
+                        if recommendations and recommendations != "N/A":
+                            st.subheader("Recommendations")
+                            st.write(recommendations)
+                    else:
+                        st.error(status)
+            
+            st.subheader("Top Romantic Messages")
+            romantic_msgs = top_romantic_messages(filtered_df)
+            if not romantic_msgs.empty:
+                for idx, row in romantic_msgs.iterrows():
+                    st.success(f"**{row['user']}** ({row['datetime'].strftime('%Y-%m-%d %H:%M')}): \"{row['message']}\" (Polarity: {row['polarity']:.2f})")
+            else:
+                st.info("No significantly romantic messages found in the filtered data. Try adjusting filters or uploading a chat with more positive sentiment.")
 
-        st.markdown("---")
-        if st.checkbox("🧭 Compatibility Radar Chart"):
-            st.subheader("Compatibility Radar Chart")
-            radar_fig, radar_error = create_compatibility_radar_chart(df)
-            if radar_fig:
-                st.pyplot(radar_fig)
+            st.subheader("Personality Traits (AI Guess)")
+            if st.button("Guess Personality Traits"):
+                with st.spinner("Analyzing personalities..."):
+                    personality_output = guess_personality_traits(filtered_df.copy())
+                    st.markdown(personality_output)
+
+            st.subheader("Conflict & Recovery Patterns (AI Analysis)")
+            if st.button("Detect Conflict Patterns"):
+                with st.spinner("Analyzing conflict patterns..."):
+                    conflict_analysis = detect_conflict_and_recovery(filtered_df.copy())
+                    st.write(conflict_analysis)
+
+            st.subheader("Relationship Compatibility Radar Chart")
+            fig_radar, radar_error = create_compatibility_radar_chart(filtered_df.copy())
+            if fig_radar:
+                st.pyplot(fig_radar)
             else:
                 st.info(radar_error)
 
-        st.markdown("---")
-        if st.checkbox("💞 Emotional Compatibility Meter"):
-            st.subheader("Emotional Compatibility Meter")
-            compat_result = emotional_compatibility_meter(df)
-            if isinstance(compat_result, str):
-                st.info(compat_result)
-            else:
-                score, interpretation, avg1, avg2, std1, std2 = compat_result
-                st.metric("Emotional Compatibility Score", f"{score:.1f}/100")
-                st.write(f"**Interpretation:** {interpretation}")
-                st.write(f"- User 1 Average Sentiment: {avg1:.2f} (Emotional Range: {std1:.2f})")
-                st.write(f"- User 2 Average Sentiment: {avg2:.2f} (Emotional Range: {std2:.2f})")
-
-        st.markdown("---")
-        if st.checkbox("💬 Message Type Classifier"):
-            st.subheader("Message Type Classifier")
-            message_type_output, msg_type_fig = classify_message_types(df)
-            if msg_type_fig:
-                st.pyplot(msg_type_fig)
-                st.write(message_type_output)
-            else:
-                st.info(message_type_output)
-
-        st.markdown("---")
-        if st.checkbox("📖 Relationship Diary Generator (AI)"):
-            st.subheader("Relationship Diary Entry (Powered by Gemini)")
-            if st.button("Generate Diary Entry"):
-                with st.spinner("Generating diary entry..."):
-                    diary_entry = generate_relationship_diary(df)
-                    st.write(diary_entry)
-            else:
-                st.info("Click the button to generate a summary of your relationship's chat history.")
+        else:
+            st.info("Please ensure your chat has exactly two participants to unlock full relationship insights.")
 
 
-        st.markdown("---")
-        if st.checkbox("📈 Mood Shifts Over Time"):
-            st.subheader("Mood Shifts Over Time (Sentiment Trend)")
-            sentiment_trend_data = sentiment_trend(df)
-            if not sentiment_trend_data.empty:
-                fig_sentiment, ax_sentiment = plt.subplots(figsize=(10, 5))
-                sns.lineplot(x='date', y='polarity', data=sentiment_trend_data, ax=ax_sentiment)
-                ax_sentiment.set_title('Average Daily Sentiment Polarity')
-                ax_sentiment.set_xlabel('Date')
-                ax_sentiment.set_ylabel('Average Polarity')
-                ax_sentiment.axhline(0, color='grey', linestyle='--', linewidth=0.8)
-                st.pyplot(fig_sentiment)
-            else:
-                st.info("Not enough data to plot sentiment trend.")
-
-        st.markdown("---")
-        if st.checkbox("💌 Love Language Classifier"):
-            st.subheader("Love Language Classifier (Based on Chat Content)")
-            love_lang_output, love_lang_fig = classify_love_language(df)
-            if love_lang_fig:
-                st.pyplot(love_lang_fig)
-                st.write(love_lang_output)
-            else:
-                st.info(love_lang_output)
-
-        st.markdown("---")
-        if st.checkbox("📊 Attachment Style Prediction (Experimental)"):
-            st.subheader("Attachment Style Prediction (Experimental)")
-            attachment_styles = predict_attachment_style(df)
-            if isinstance(attachment_styles, str):
-                st.info(attachment_styles)
-            else:
-                for user, data in attachment_styles.items():
-                    st.write(f"**{user}:** {data['style']}")
-                    st.write(f"*{data['explanation']}*")
-
-
-elif st.session_state.page == "business_features": # BUSINESS FEATURES PAGE
-    st.title("💼 Business Features")
-    st.write("Analyze your business-related WhatsApp chats for operational insights.")
-    st.warning("⚠️ **Disclaimer:** These analyses are based on textual patterns and heuristics. For critical business decisions, always cross-reference with official records.")
-
-    if df.empty:
-        st.warning("Please upload a WhatsApp chat file on the 'Chat Analysis Dashboard' page to enable these features.")
     else:
-        # Pre-calculate polarity for business features too
-        df['polarity'] = df['message'].apply(lambda msg: TextBlob(msg).sentiment.polarity)
+        st.info("Upload a WhatsApp chat file to get started!")
 
-        st.markdown("---")
-        st.markdown("### 🔍 Core Analytics")
+# Main app logic
+if 'logged_in' not in st.session_state:
+    st.session_state['logged_in'] = False
+if 'page' not in st.session_state:
+    st.session_state['page'] = 'login'
 
-        if st.checkbox("📊 Response Time Insights"):
-            st.subheader("Response Time Insights (Business Context)")
-            res_str, res_fig = business_response_time_insights(df)
-            if res_fig:
-                st.write(res_str)
-                st.pyplot(res_fig)
-            else:
-                st.info(res_str)
-
-        st.markdown("---")
-        if st.checkbox("📦 Order Tracker"):
-            st.subheader("Order Tracking (Keyword-based)")
-            order_output, order_fig = order_tracker(df)
-            if order_fig:
-                st.write(order_output)
-                st.pyplot(order_fig)
-            else:
-                st.info(order_output)
-        
-        st.markdown("---")
-        if st.checkbox("💬 Message Classification"):
-            st.subheader("Business Message Type Classification")
-            biz_msg_output, biz_msg_fig = business_message_classification(df)
-            if biz_msg_fig:
-                st.pyplot(biz_msg_fig)
-                st.write(biz_msg_output)
-            else:
-                st.info(biz_msg_output)
-
-        st.markdown("---")
-        if st.checkbox("🎯 Deal Conversion Funnel"):
-            st.subheader("Conceptual Deal Conversion Funnel")
-            funnel_output, funnel_fig = deal_conversion_funnel(df)
-            if funnel_fig:
-                st.write(funnel_output)
-                st.pyplot(funnel_fig)
-            else:
-                st.info(funnel_output)
-
-        st.markdown("---")
-        if st.checkbox("💰 Total Payments Extracted"):
-            st.subheader("Total Payments Extracted from Chat")
-            total_paid_amount, extracted_details = extract_total_paid_enhanced(df)
-            if total_paid_amount > 0:
-                st.success(f"**Total Amount Detected:** ₹{total_paid_amount:,.2f}")
-                st.info("This includes messages like '1000 paid', '₹1000 received', 'Paid ₹1000', 'Payment of 1000 done'.")
-                if extracted_details:
-                    st.write("### Extracted Payment Details:")
-                    payments_df = pd.DataFrame(extracted_details)
-                    st.dataframe(payments_df[['datetime', 'user', 'extracted_amount', 'message']])
-            else:
-                st.info("No payment messages (e.g., '1000 paid', '₹1000 received') found in the chat.")
-
-        st.markdown("---")
-        if st.checkbox("💡 Client Sentiment Breakdown"):
-            st.subheader("Client Sentiment Breakdown")
-            st.write("Analyze the sentiment of messages from clients over time.")
-            
-            # Assuming the 'business' is one user and 'clients' are others, or just overall sentiment.
-            # For simplicity, we'll show overall sentiment trend.
-            sentiment_trend_data = sentiment_trend(df)
-            if not sentiment_trend_data.empty:
-                fig_sentiment, ax_sentiment = plt.subplots(figsize=(10, 5))
-                sns.lineplot(x='date', y='polarity', data=sentiment_trend_data, ax=ax_sentiment)
-                ax_sentiment.set_title('Average Daily Sentiment Polarity (Overall Chat)')
-                ax_sentiment.set_xlabel('Date')
-                ax_sentiment.set_ylabel('Average Polarity')
-                ax_sentiment.axhline(0, color='grey', linestyle='--', linewidth=0.8)
-                st.pyplot(fig_sentiment)
-                
-                # Highlight top positive/negative days
-                if not sentiment_trend_data.empty:
-                    most_positive_day = sentiment_trend_data.loc[sentiment_trend_data['polarity'].idxmax()]
-                    most_negative_day = sentiment_trend_data.loc[sentiment_trend_data['polarity'].idxmin()]
-                    st.success(f"**Most Positive Day:** {most_positive_day['date'].strftime('%Y-%m-%d')} (Polarity: {most_positive_day['polarity']:.2f})")
-                    st.error(f"**Most Negative Day:** {most_negative_day['date'].strftime('%Y-%m-%d')} (Polarity: {most_negative_day['polarity']:.2f})")
-            else:
-                st.info("Not enough data to plot client sentiment trend.")
-
-        st.markdown("---")
-        if st.checkbox("🗂️ Top 5 Repeated Issues"):
-            st.subheader("Top Repeated Issues (Keywords)")
-            issues_output, issues_fig = top_repeated_issues(df)
-            if issues_fig:
-                st.write(issues_output)
-                st.pyplot(issues_fig)
-            else:
-                st.info(issues_output)
-
-        st.markdown("---")
-        if st.checkbox("⏱️ Working Hour Violation Detector"):
-            st.subheader("Working Hour Violation Detector")
-            st.write("Checks for messages sent/received outside defined working hours (10 AM - 7 PM).")
-            violation_status = working_hour_violation_detector(df)
-            st.write(violation_status)
-
-        st.markdown("---")
-        if st.checkbox("📅 Follow-Up Needed Flag"):
-            st.subheader("Follow-Up Needed Flag")
-            follow_up_status = follow_up_needed_flag(df)
-            st.write(follow_up_status)
-
-        st.markdown("---")
-        st.markdown("### 🚀 Bonus: Automation & Export")
-
-        if st.checkbox("📝 Smart Summary Generator (AI)"):
-            st.subheader("Smart Business Summary (Powered by Gemini)")
-            if st.button("Generate Business Summary"):
-                with st.spinner("Generating smart business summary..."):
-                    business_summary = smart_summary_generator(df)
-                    st.write(business_summary)
-            else:
-                st.info("Click the button to get an AI-generated summary of your business chat performance.")
-
-        if st.checkbox("🧠 AI Auto-Responder Trainer (Conceptual)"):
-            st.subheader("AI Auto-Responder Trainer (Conceptual)")
-            ai_auto_responder_trainer(df)
+if st.session_state['logged_in']:
+    show_main_app()
+else:
+    show_login_page()
